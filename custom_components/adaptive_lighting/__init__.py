@@ -5,14 +5,20 @@ from typing import Any, Dict
 import voluptuous as vol
 
 from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
+from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
+from homeassistant.components.light import VALID_TRANSITION
 from homeassistant.const import CONF_SOURCE
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
 import homeassistant.helpers.config_validation as cv
+
+from .switch import AdaptiveSwitch, _expand_light_groups
 
 from .const import (
     _DOMAIN_SCHEMA,
     ATTR_TURN_ON_OFF_LISTENER,
     CONF_NAME,
+    CONF_LIGHTS,
+    CONF_TRANSITION,
     DOMAIN,
     UNDO_UPDATE_LISTENER,
 )
@@ -38,7 +44,6 @@ CONFIG_SCHEMA = vol.Schema(
 
 async def async_setup(hass: HomeAssistant, config: Dict[str, Any]):
     """Import integration from config."""
-
     if DOMAIN in config:
         for entry in config[DOMAIN]:
             hass.async_create_task(
@@ -46,7 +51,52 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]):
                     DOMAIN, context={CONF_SOURCE: SOURCE_IMPORT}, data=entry
                 )
             )
+        
+    async def handle_turn_on(service_call: ServiceCall):
+        """Handle the entity service apply."""
+
+        service_data = service_call.data
+        all_lights = _expand_light_groups(hass, service_data[CONF_LIGHTS])
+
+        data = hass.data[DOMAIN]
+
+        #switches = [data[switch_id][SWITCH_DOMAIN] for switch_id in data]
+        
+        for light in all_lights:
+            # find switch configured for the light
+            found = False
+            for switch_id in data:
+                if switch_id == ATTR_TURN_ON_OFF_LISTENER:
+                    continue
+                switch = data[switch_id][SWITCH_DOMAIN]
+                if light in _expand_light_groups(hass, switch._lights):
+                    found = True
+                    switch.turn_on_off_listener.lights.update([light])
+                    await switch._adapt_light(  # pylint: disable=protected-access
+                        light,
+                        transition=service_data[CONF_TRANSITION],
+                        adapt_brightness=True,
+                        adapt_color_temp=True,
+                        adapt_rgb_color=True,
+                        force=True
+                    )
+                    break
+            if not found:
+                _LOGGER.warning("Turn on service: no switch found for specified light '%s'", light)
+                # TODO: maybe call default turn on
+ 
+
+    hass.services.async_register(DOMAIN, "turn_on", handle_turn_on, schema=vol.Schema({
+        vol.Required(CONF_LIGHTS): cv.entity_ids,
+        vol.Optional(
+            CONF_TRANSITION,
+            default=1,
+        ): VALID_TRANSITION
+    }))
+
     return True
+
+
 
 
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry):

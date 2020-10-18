@@ -34,3 +34,12 @@ set_manual_control:
     lights:
       description: entity_id(s) of lights.
       example: light.bedroom_ceiling
+turn_on:
+  description: Turn on lights using adaptive lighting settings
+  fields:
+    lights:
+      description: entity_id(s) of lights.
+      example: light.bedroom_ceiling   
+    transition:
+      description: "Turn on transition time"
+      example: 10
